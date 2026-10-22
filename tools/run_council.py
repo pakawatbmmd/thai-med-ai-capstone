@@ -10,8 +10,13 @@ Usage:
   python3 tools/run_council.py --list-models
   python3 tools/run_council.py --council v7 --round 1 [--agents codex gemini] [--dry-run]
 
+Authentication: preferably as cloud-environment network secrets, which the agent
+proxy injects into requests (api.openai.com: "Authorization: Bearer <key>";
+generativelanguage.googleapis.com: "x-goog-api-key: <key>"), so the keys never
+enter the session. If OPENAI_API_KEY / GEMINI_API_KEY are set instead, they are
+sent directly.
+
 Environment:
-  OPENAI_API_KEY, GEMINI_API_KEY   required for the matching agent
   OPENAI_MODEL  (default gpt-6.1-sol)        verify with --list-models
   GEMINI_MODEL  (default gemini-4-argon)     verify with --list-models
   OPENAI_REASONING_EFFORT (default high)
@@ -129,10 +134,18 @@ def post(url, headers, body):
         sys.exit(f"HTTP {e.code} from {url}: {e.read().decode()[:2000]}")
 
 
+def auth_headers(agent):
+    # Without an env key, the agent proxy's network secret supplies the header.
+    key = os.environ.get(KEY[agent])
+    if not key:
+        return {}
+    return {"Authorization": f"Bearer {key}"} if agent == "codex" else {"x-goog-api-key": key}
+
+
 def call_openai(prompt):
     data = post(
         "https://api.openai.com/v1/responses",
-        {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}", "Content-Type": "application/json"},
+        {**auth_headers("codex"), "Content-Type": "application/json"},
         {
             "model": os.environ.get("OPENAI_MODEL", "gpt-6.1-sol"),
             "reasoning": {"effort": os.environ.get("OPENAI_REASONING_EFFORT", "high")},
@@ -148,7 +161,7 @@ def call_gemini(prompt):
     model = os.environ.get("GEMINI_MODEL", "gemini-4-argon")
     data = post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        {"x-goog-api-key": os.environ["GEMINI_API_KEY"], "Content-Type": "application/json"},
+        {**auth_headers("gemini"), "Content-Type": "application/json"},
         {"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
     )
     candidate = data["candidates"][0]
@@ -160,14 +173,15 @@ KEY = {"codex": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}
 
 
 def list_models():
-    if os.environ.get("OPENAI_API_KEY"):
-        req = urllib.request.Request("https://api.openai.com/v1/models",
-                                     headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"})
-        print("OpenAI:", sorted(m["id"] for m in json.load(urllib.request.urlopen(req))["data"]))
-    if os.environ.get("GEMINI_API_KEY"):
-        req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-                                     headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
-        print("Gemini:", sorted(m["name"] for m in json.load(urllib.request.urlopen(req))["models"]))
+    for agent, url, field, key in (
+        ("codex", "https://api.openai.com/v1/models", "data", "id"),
+        ("gemini", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", "models", "name"),
+    ):
+        try:
+            data = json.load(urllib.request.urlopen(urllib.request.Request(url, headers=auth_headers(agent))))
+            print(f"{agent}:", sorted(m[key] for m in data[field]))
+        except urllib.error.HTTPError as e:
+            print(f"{agent}: HTTP {e.code} (is the network secret or {KEY[agent]} set?)")
 
 
 def main():
@@ -202,8 +216,6 @@ def main():
         print(f"[{args.council} r{args.round} {agent}] {len(prompt):,} chars, {len(paths)} files")
         if args.dry_run:
             continue
-        if not os.environ.get(KEY[agent]):
-            sys.exit(f"{KEY[agent]} is not set")
         text = CALL[agent](prompt)
         path = os.path.join(out_dir, f"{agent}_round{args.round}.md")
         with open(path, "w") as f:
