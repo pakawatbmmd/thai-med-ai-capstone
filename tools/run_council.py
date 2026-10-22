@@ -38,6 +38,7 @@ BRANCH = {
     "v6": "origin/claude/future-of-care-research",
     "v7": "origin/claude/decision-model-council",
     "v8": "origin/claude/decision-model-council",
+    "v9": "origin/claude/decision-model-council",
 }
 DIR = {
     "v4": "council_v4",
@@ -45,6 +46,7 @@ DIR = {
     "v6": "council_v6_future_of_care",
     "v7": "council_v7_flip_perspective",
     "v8": "council_v8_clinical_flip",
+    "v9": "council_v9_committee_roast",
 }
 # Files each council's Round 1 prompt tells the agent to read, as (ref, path or
 # directory). A directory includes every .md file directly inside it.
@@ -75,6 +77,12 @@ ROUND1_CONTEXT = {
         ("v8", "README.md"),
         ("v8", "council_v8_clinical_flip/brief.md"),
     ],
+    "v9": [
+        ("v9", "README.md"),
+        ("v9", "council_v9_committee_roast/brief.md"),
+        ("local", os.environ.get("COUNCIL_PRIVATE_DIR", ".") + "/v9_programme_requirements.md"),
+        ("local", os.environ.get("COUNCIL_PRIVATE_DIR", ".") + "/capstone_2568_catalogue.md"),
+    ],
 }
 # Round 2 adds all three Round 1 answers on top of the council's main report.
 ROUND2_CONTEXT = {
@@ -83,6 +91,11 @@ ROUND2_CONTEXT = {
     "v6": [("v6", "reports/AI care vectors for Thailand.md")],
     "v7": [("v7", "council_v7_flip_perspective/brief.md")],
     "v8": [("v8", "council_v8_clinical_flip/brief.md")],
+    "v9": [
+        ("v9", "council_v9_committee_roast/brief.md"),
+        ("local", os.environ.get("COUNCIL_PRIVATE_DIR", ".") + "/v9_programme_requirements.md"),
+        ("local", os.environ.get("COUNCIL_PRIVATE_DIR", ".") + "/capstone_2568_catalogue.md"),
+    ],
 }
 
 PREAMBLE = """You are running through an API, not an agentic CLI, so you cannot open files.
@@ -106,6 +119,10 @@ def list_dir(ref, path):
 def gather(entries):
     files = []
     for council, path in entries:
+        if council == "local":
+            # Private inputs (e.g. course materials) read from disk, never committed.
+            files.append((os.path.basename(path), open(os.path.expanduser(path)).read()))
+            continue
         ref = BRANCH[council]
         paths = list_dir(ref, path) if path.endswith("/") else [path]
         for p in sorted(paths):
