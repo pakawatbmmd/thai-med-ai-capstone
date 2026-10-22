@@ -37,12 +37,14 @@ BRANCH = {
     "v5": "origin/claude/medical-harness-research",
     "v6": "origin/claude/future-of-care-research",
     "v7": "origin/claude/decision-model-council",
+    "v8": "origin/claude/decision-model-council",
 }
 DIR = {
     "v4": "council_v4",
     "v5": "council_v5_harness",
     "v6": "council_v6_future_of_care",
     "v7": "council_v7_flip_perspective",
+    "v8": "council_v8_clinical_flip",
 }
 # Files each council's Round 1 prompt tells the agent to read, as (ref, path or
 # directory). A directory includes every .md file directly inside it.
@@ -69,6 +71,10 @@ ROUND1_CONTEXT = {
         ("v7", "council_v7_flip_perspective/brief.md"),
         ("v6", "reports/AI care vectors for Thailand.md"),
     ],
+    "v8": [
+        ("v8", "README.md"),
+        ("v8", "council_v8_clinical_flip/brief.md"),
+    ],
 }
 # Round 2 adds all three Round 1 answers on top of the council's main report.
 ROUND2_CONTEXT = {
@@ -76,6 +82,7 @@ ROUND2_CONTEXT = {
     "v5": [("v5", "reports/Medical agent harness.md")],
     "v6": [("v6", "reports/AI care vectors for Thailand.md")],
     "v7": [("v7", "council_v7_flip_perspective/brief.md")],
+    "v8": [("v8", "council_v8_clinical_flip/brief.md")],
 }
 
 PREAMBLE = """You are running through an API, not an agentic CLI, so you cannot open files.
