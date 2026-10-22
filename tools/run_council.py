@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -125,13 +126,19 @@ def build_prompt(council, rnd, agent, round1_answers):
     return f"{PREAMBLE}\n{instructions}\n\n{inlined}\n", [p for p, _ in files]
 
 
-def post(url, headers, body):
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=1800) as resp:
-            return json.load(resp)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"HTTP {e.code} from {url}: {e.read().decode()[:2000]}")
+def request(url, headers, body=None, retries=4):
+    # Transient 5xx responses from the proxy or upstream are retried with backoff.
+    data = json.dumps(body).encode() if body is not None else None
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as e:
+            if e.code >= 500 and attempt < retries:
+                time.sleep(2 ** attempt * 5)
+                continue
+            sys.exit(f"HTTP {e.code} from {url}: {e.read().decode()[:2000]}")
 
 
 def auth_headers(agent):
@@ -143,15 +150,24 @@ def auth_headers(agent):
 
 
 def call_openai(prompt):
-    data = post(
+    # High-effort answers take minutes, longer than the proxy holds a connection
+    # open, so submit in background mode and poll for the result.
+    headers = {**auth_headers("codex"), "Content-Type": "application/json"}
+    data = request(
         "https://api.openai.com/v1/responses",
-        {**auth_headers("codex"), "Content-Type": "application/json"},
+        headers,
         {
             "model": os.environ.get("OPENAI_MODEL", "gpt-6.1-sol"),
             "reasoning": {"effort": os.environ.get("OPENAI_REASONING_EFFORT", "high")},
             "input": prompt,
+            "background": True,
         },
     )
+    while data.get("status") in ("queued", "in_progress"):
+        time.sleep(15)
+        data = request(f"https://api.openai.com/v1/responses/{data['id']}", headers)
+    if data.get("status") != "completed":
+        sys.exit(f"OpenAI response {data.get('id')} ended {data.get('status')}: {data.get('error') or data.get('incomplete_details')}")
     parts = [c["text"] for item in data.get("output", []) if item.get("type") == "message"
              for c in item.get("content", []) if c.get("type") == "output_text"]
     return "".join(parts)
@@ -159,7 +175,7 @@ def call_openai(prompt):
 
 def call_gemini(prompt):
     model = os.environ.get("GEMINI_MODEL", "gemini-4-argon")
-    data = post(
+    data = request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         {**auth_headers("gemini"), "Content-Type": "application/json"},
         {"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
