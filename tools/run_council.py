@@ -173,15 +173,38 @@ def call_openai(prompt):
     return "".join(parts)
 
 
-def call_gemini(prompt):
+def call_gemini(prompt, retries=3):
+    # Gemini has no background mode, so stream (with thought summaries, which keep
+    # bytes flowing while it thinks) to stop the proxy from dropping an idle request.
     model = os.environ.get("GEMINI_MODEL", "gemini-4-argon")
-    data = request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        {**auth_headers("gemini"), "Content-Type": "application/json"},
-        {"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
-    )
-    candidate = data["candidates"][0]
-    return "".join(p.get("text", "") for p in candidate["content"]["parts"] if not p.get("thought"))
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
+    body = json.dumps({
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"thinkingConfig": {"includeThoughts": True}},
+    }).encode()
+    headers = {**auth_headers("gemini"), "Content-Type": "application/json"}
+    for attempt in range(retries + 1):
+        text = []
+        try:
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                for line in resp:
+                    line = line.decode().strip()
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = json.loads(line[5:])
+                    for cand in chunk.get("candidates", []):
+                        for part in cand.get("content", {}).get("parts", []):
+                            if not part.get("thought"):
+                                text.append(part.get("text", ""))
+            return "".join(text)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            code = getattr(e, "code", None)
+            if (code is None or code >= 500) and attempt < retries:
+                time.sleep(2 ** attempt * 5)
+                continue
+            detail = e.read().decode()[:2000] if hasattr(e, "read") else str(e)
+            sys.exit(f"Gemini error ({code}): {detail}")
 
 
 CALL = {"codex": call_openai, "gemini": call_gemini}
